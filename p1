@@ -1,0 +1,22 @@
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.parse
+import os
+
+class Recv(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers['Content-Length'])
+        data = urllib.parse.parse_qs(self.rfile.read(length).decode('utf-8'))
+        
+        name = data.get('ComputerName', ['Unknown'])[0]
+        info = data.get('Data', [''])[0]
+        
+        os.makedirs(r"C:\collected_data", exist_ok=True)
+        with open(f"C:\\collected_data\\{name}.txt", "w", encoding="utf-8") as f:
+            f.write(info)
+            
+        print(f"[+] Saved: {name}")
+        self.send_response(200)
+        self.end_headers()
+
+print("[*] Running 8080...")
+HTTPServer(('0.0.0.0', 8080), Recv).serve_forever()
