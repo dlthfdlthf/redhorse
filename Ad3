@@ -1,0 +1,42 @@
+Set objRootDSE = GetObject("LDAP://RootDSE")
+strDomain = objRootDSE.Get("defaultNamingContext")
+
+Dim arrDomainParts, strCleanDomain, part
+arrDomainParts = Split(strDomain, ",")
+strCleanDomain = ""
+For Each part In arrDomainParts
+    If InStr(LCase(part), "dc=") > 0 Then
+        If strCleanDomain <> "" Then strCleanDomain = strCleanDomain & "."
+        strCleanDomain = strCleanDomain & Mid(part, 4)
+    End If
+Next
+strCleanDomain = UCase(strCleanDomain)
+
+Set objConnection = CreateObject("ADODB.Connection")
+objConnection.Open "Provider=ADSDSOObject;"
+Set objCommand = CreateObject("ADODB.Command")
+objCommand.ActiveConnection = objConnection
+
+objCommand.CommandText = "<LDAP://" & strDomain & ">;(objectCategory=User);samAccountName,servicePrincipalName;subtree"
+Set objRecordSet = objCommand.Execute
+
+On Error Resume Next
+While Not objRecordSet.EOF
+    strUser = objRecordSet.Fields("samAccountName").Value
+    spnField = objRecordSet.Fields("servicePrincipalName").Value
+    
+    If Not IsNull(spnField) Then
+        strSPN = ""
+        If IsArray(spnField) Then
+            For Each spn In spnField
+                strSPN = strSPN & spn & " "
+            Next
+        Else
+            strSPN = spnField
+        End If
+        
+        Wscript.Echo strCleanDomain & "," & strUser & "," & strSPN
+    End If
+    
+    objRecordSet.MoveNext
+Wend
