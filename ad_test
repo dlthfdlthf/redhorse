@@ -1,0 +1,12 @@
+Set objRootDSE = GetObject("LDAP://RootDSE")
+strDomain = objRootDSE.Get("defaultNamingContext")
+Set objConnection = CreateObject("ADODB.Connection")
+objConnection.Open "Provider=ADSDSOObject;"
+Set objCommand = CreateObject("ADODB.Command")
+objCommand.ActiveConnection = objConnection
+objCommand.CommandText = "<LDAP://" & strDomain & ">;(objectCategory=User);samAccountName,servicePrincipalName;subtree"
+Set objRecordSet = objCommand.Execute
+While Not objRecordSet.EOF
+    Wscript.Echo objRecordSet.Fields("samAccountName") & " - " & objRecordSet.Fields("servicePrincipalName")
+    objRecordSet.MoveNext
+Wend
