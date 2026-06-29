@@ -1,0 +1,31 @@
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="Recon">
+    <ADReconTask />
+  </Target>
+  <UsingTask TaskName="ADReconTask" TaskFactory="CodeTaskFactory" AssemblyFile="C:\Windows\Microsoft.Net\Framework64\v4.0.30319\Microsoft.Build.Tasks.v4.0.dll" >
+    <Task>
+      <Code Type="Class" Language="cs">
+        <![CDATA[
+        using System;
+        using Microsoft.Build.Framework;
+        using Microsoft.Build.Utilities;
+        using System.DirectoryServices.ActiveDirectory;
+
+        public class ADReconTask : Task, ITask {
+            public override bool Execute() {
+                try {
+                    // 현재 PC가 가입된 AD 도메인 정보 추출
+                    Domain domain = Domain.GetCurrentDomain();
+                    Console.WriteLine("[*] AD Domain Name: " + domain.Name);
+                    Console.WriteLine("[*] Domain Controller: " + domain.PdcRoleOwner.Name);
+                } catch (Exception e) {
+                    Console.WriteLine("[-] Error: " + e.Message);
+                }
+                return true;
+            }
+        }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+</Project>
