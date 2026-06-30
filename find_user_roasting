@@ -1,0 +1,62 @@
+Option Explicit
+
+Dim objRootDSE, strDomainNC, objConnection, objCommand, objRecordSet
+Dim strLDAPQuery, strAttributes, strFinalQuery
+
+' 1. 현재 도메인의 고유 이름(Distinguished Name) 가져오기
+Set objRootDSE = GetObject("LDAP://rootDSE")
+strDomainNC = objRootDSE.Get("defaultNamingContext")
+
+' 2. ADO 연결 및 명령 객체 설정
+Set objConnection = CreateObject("ADODB.Connection")
+Set objCommand = CreateObject("ADODB.Command")
+
+objConnection.Provider = "ADsDSOObject"
+objConnection.Open "Active Directory Provider"
+Set objCommand.ActiveConnection = objConnection
+
+' 3. LDAP 쿼리 정의 
+' userAccountControl 구조에서 DONT_REQ_PREAUTH (0x00400000 = 4194304) 비트가 활성화된 유저 검색
+strLDAPQuery = "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=4194304))"
+strAttributes = "sAMAccountName,userPrincipalName,distinguishedName"
+
+strFinalQuery = "<LDAP://" & strDomainNC & ">;" & strLDAPQuery & ";" & strAttributes & ";subtree"
+
+objCommand.CommandText = strFinalQuery
+objCommand.Properties("Page Size") = 1000
+objCommand.Properties("Timeout") = 30
+objCommand.Properties("Searchscope") = 2 ' ADS_SCOPE_SUBTREE
+
+' 4. 쿼리 실행 및 결과 출력
+On Error Resume Next
+Set objRecordSet = objCommand.Execute
+
+If Err.Number <> 0 Then
+    WScript.Echo "에러 발생: " & Err.Description
+    WScript.Quit
+End If
+On Error GoTo 0
+
+WScript.Echo "=========================================================="
+WScript.Echo " AS-REP Roasting 가능한 사용자 계정 목록"
+WScript.Echo "=========================================================="
+
+If objRecordSet.EOF Then
+    WScript.Echo "취약한 계정이 발견되지 않았습니다."
+Else
+    Do Until objRecordSet.EOF
+        WScript.Echo "ID (sAMAccountName) : " & objRecordSet.Fields("sAMAccountName").Value
+        WScript.Echo "UPN                : " & objRecordSet.Fields("userPrincipalName").Value
+        WScript.Echo "DN                 : " & objRecordSet.Fields("distinguishedName").Value
+        WScript.Echo "----------------------------------------------------------"
+        objRecordSet.MoveNext
+    Loop
+End If
+
+' 5. 자원 해제
+objRecordSet.Close
+objConnection.Close
+Set objRecordSet = Nothing
+Set objCommand = Nothing
+Set objConnection = Nothing
+Set objRootDSE = Nothing
